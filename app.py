@@ -76,7 +76,7 @@ if signal in ["BUY", "SELL"] and not already_traded:
             sl = round(latest_close + SL_PIPS, 5)
             units = -MAX_UNITS
 
-        # OANDA credentials from secrets
+        # OANDA credentials from Streamlit secrets
         OANDA_API_KEY = st.secrets["OANDA_API_KEY"]
         OANDA_ACCOUNT_ID = st.secrets["OANDA_ACCOUNT_ID"]
         client = API(access_token=OANDA_API_KEY, environment="practice")
@@ -117,7 +117,46 @@ elif already_traded:
 else:
     st.info("⚪ No trade signal at this time.")
 
+# === Update PnL for previous trades ===
+enriched_df = pd.read_csv("EURUSD_with_SR_enriched.csv")
+enriched_df["date"] = pd.to_datetime(enriched_df["date"])
+open_trades = trade_log[trade_log["pnl"].isna()].copy()
+
+for idx, row in open_trades.iterrows():
+    trade_date = pd.to_datetime(row["date"])
+    direction = 1 if row["signal"] == "BUY" else -1
+    tp = row["tp"]
+    sl = row["sl"]
+    entry_price = row["price"]
+
+    next_day = enriched_df[enriched_df["date"] == trade_date + pd.Timedelta(days=1)]
+    if next_day.empty:
+        continue
+
+    high = next_day["high"].values[0]
+    low = next_day["low"].values[0]
+
+    if direction == 1:
+        if high >= tp:
+            pnl = (tp - entry_price) * row["units"]
+        elif low <= sl:
+            pnl = (sl - entry_price) * row["units"]
+        else:
+            pnl = 0
+    else:
+        if low <= tp:
+            pnl = (entry_price - tp) * abs(row["units"])
+        elif high >= sl:
+            pnl = (entry_price - sl) * abs(row["units"])
+        else:
+            pnl = 0
+
+    trade_log.at[idx, "pnl"] = round(pnl, 2)
+
+# Save PnL-updated trade log
+trade_log.to_csv(TRADE_LOG_PATH, index=False)
+
 # === Show Trade Log ===
 if not trade_log.empty:
-    st.subheader("📊 Trade Log")
+    st.subheader("📊 Trade Log (Last 10)")
     st.dataframe(trade_log.tail(10))
